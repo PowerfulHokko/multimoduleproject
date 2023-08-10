@@ -13,6 +13,7 @@ import akka.pattern.ask
 import akka.stream.ActorMaterializer
 import akka.util.Timeout
 import com.hokko.alpha.database.AuthDatabase
+import com.hokko.alpha.logger.ContextLogger
 import com.hokko.alpha.models.database.{User, UserKeys}
 import com.hokko.alpha.models.dto.{RegisterUserEndpointModel, RegisterUserEndpointModelJson}
 
@@ -24,8 +25,10 @@ import spray.json._
 import java.nio.charset.Charset
 import java.time.Instant
 import java.util.Date
+import java.util.logging.Level
+import scala.util.{Failure, Success, Try}
 
-object SecurityApp extends App with SprayJsonSupport with RegisterUserEndpointModelJson{
+object SecurityApp extends SprayJsonSupport with RegisterUserEndpointModelJson{
     import SecurityConfiguration._
 
     /*
@@ -36,34 +39,36 @@ object SecurityApp extends App with SprayJsonSupport with RegisterUserEndpointMo
         - simplify
         - write tests
         - complete analysis doc
+
+        -debugger
+        -flyway db generator
      */
 
     implicit val system: ActorSystem = ActorSystem("Sec")
     implicit val materializer: ActorMaterializer = ActorMaterializer()
     implicit val dispatcher: MessageDispatcher = system.dispatchers.lookup("dedicated-dispatcher")
-
-    val authDbActor = system.actorOf(Props(new AuthDatabase))
     implicit val timeout = Timeout(2 second)
 
+    val debugLogger = ContextLogger(this.getClass)
+
+    val authDbActor = system.actorOf(Props(new AuthDatabase))
+
     val hashfunction: (String, String, Array[Byte] ) => (String) => (String) = {
-        (username, algo, salt) =>
-            (pw) => {
+        (username, algo, salt) => (pw) => {
                 val hashed = HashUtil.createHashForUserWhenLogginAttempt(username, salt, algo, pw)
                 new String(hashed, Charset.forName("UTF-8"))
-            }
+        }
     }
 
     def authenticator(credentials: Credentials) : Future[Option[(String,String)]] = {
         credentials match {
             case Credentials.Missing => Future(Option.empty[(String,String)])
             case p @ Credentials.Provided(identifier) => {
-                //check if user exists
                 val existsFuture =  (authDbActor ? AuthDatabase.RequestIfUserExists(identifier)).mapTo[Future[Boolean]].flatten
                 val exist = Await.result(existsFuture, 1 second)
                 if(!exist){
                     Future(Option.empty[(String,String)])
                 } else {
-                    //get user from db
                     (authDbActor ? AuthDatabase.RequestUser(identifier)).mapTo[Future[Option[(User, UserKeys)]]]
                         .flatten
                         .map {
@@ -90,68 +95,82 @@ object SecurityApp extends App with SprayJsonSupport with RegisterUserEndpointMo
     }
 
     val serviceRoute: Route = {
-        Route.seal{
+        Route.seal {
             pathPrefix("authservice") {
-                path("register") {
-                    pathEndOrSingleSlash {
-                        (post & extractRequest) { req =>
-                            val createUserRequestFuture = req.entity.toStrict(1 second)
-                                .map(_.data.utf8String)
-                                .map(s => s.parseJson.convertTo[RegisterUserEndpointModel])
+                (path("register") & pathEndOrSingleSlash & post & extractRequest) { req =>
+                    debugLogger.log(s"Request: ${req.uri} : ${req.method} from ${req.headers.toList.map(h => (h.name(), h.value()))}")
+                    val createUserRequestFuture = req.entity.toStrict(1 second)
+                        .map(_.data.utf8String)
+                        .map(s => s.parseJson.convertTo[RegisterUserEndpointModel])
 
-                            val createUserRequest = Await.result(createUserRequestFuture, 1 second)
+                    val createUserRequest = Await.result(createUserRequestFuture, 1 second)
 
-                            val userExistFuture = (authDbActor ? AuthDatabase.RequestIfUserExists(createUserRequest.username))
-                                .mapTo[Future[Boolean]].flatten
+                    val userExistFuture = (authDbActor ? AuthDatabase.RequestIfUserExists(createUserRequest.username))
+                        .mapTo[Future[Boolean]].flatten
 
-                            val userExists = Await.result(userExistFuture, 1 second)
+                    val userExists = Await.result(userExistFuture, 1 second)
 
-                            if(userExists){
-                                complete(
-                                    StatusCodes.Unauthorized,
-                                    HttpEntity("Username already registered")
-                                )
-                            } else {
-                                val (hash, salt, algo) = HashUtil.createHashForUserWhenRegistering(createUserRequest.username, createUserRequest.password)
+                    if (userExists) {
+                        complete(
+                            StatusCodes.Unauthorized,
+                            HttpEntity("Username already registered")
+                        )
+                    } else {
+                        val (hash, salt, algo) = HashUtil.createHashForUserWhenRegistering(createUserRequest.username, createUserRequest.password)
 
-                                val userFuture = (authDbActor ? AuthDatabase.RegisterUser(createUserRequest.username, hash, salt, algo))
-                                    .mapTo[Long]
+                        val userFuture = (authDbActor ? AuthDatabase.RegisterUser(createUserRequest.username, hash, salt, algo))
+                            .mapTo[Long]
 
-                                val res = Await.result(userFuture, 1 second)
+                        val res = Await.result(userFuture, 1 second)
 
-                                complete(StatusCodes.Created, HttpEntity(s"User: ${createUserRequest.username} created, ID = ${res}"))
-                            }
-
-                        } ~ get {
-                            complete(StatusCodes.OK)
-                        }
+                        complete(StatusCodes.Created, HttpEntity(s"User: ${createUserRequest.username} created, ID = ${res}"))
                     }
                 } ~
-                pathEndOrSingleSlash {
-                    get {
-                        complete(
-                            HttpEntity(ContentTypes.`text/html(UTF-8)`, {
-                                """
-                                  |<div>
-                                  |<h1>AuthService online.</h1>
-                                  |</div>
-                                  |""".stripMargin
-                            }
-                            )
-                        )
-                    } ~ post {
-                        authenticateBasicAsync("localhost",authenticator){ s =>
-                            respondWithHeader(RawHeader("auth-cookie",s"$s:${Date.from(Instant.now())}")){
+                    (pathEndOrSingleSlash & post) {
+                        authenticateBasicAsync("localhost", authenticator) { s =>
+                            respondWithHeader(RawHeader("auth-cookie", s"$s:${Date.from(Instant.now())}")) {
                                 complete(StatusCodes.OK)
                             }
                         }
                     }
-                }
+            } ~ pathEndOrSingleSlash {
+                complete(
+                    HttpEntity(ContentTypes.`text/html(UTF-8)`, {
+                        """
+                          |<div>
+                          |<h1>AuthService online.</h1>
+                          |</div>
+                          |""".stripMargin
+                    }
+                    )
+                )
+            }
+        }
+    }
+
+    def main(args: Array[String]): Unit = {
+        debugLogger.log("App running")
+        val server : Future[akka.http.scaladsl.Http.ServerBinding] = Http().newServerAt("localhost",8086).enableHttps(HttpsContext.httpsConnectionContext).bind(serviceRoute)
+
+        //make this to change dynamics while running
+        var flag = true;
+        while(flag){
+            val input = Console.in.readLine()
+            Try {
+                input.toInt
+            } match {
+                case Success(value) if value == 100 => flag = false;
+                case _ => ()
             }
         }
 
-    }
+        server.map(s => {
+            s.unbind();
+            s.terminate(30 second)
+            system.terminate()
+        })
 
-        val server : Future[akka.http.scaladsl.Http.ServerBinding] = Http().newServerAt("localhost",8086).enableHttps(HttpsContext.httpsConnectionContext).bind(serviceRoute)
+        debugLogger.log("App finished")
+    }
 
 }

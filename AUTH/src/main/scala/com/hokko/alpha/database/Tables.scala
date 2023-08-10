@@ -1,4 +1,5 @@
 package com.hokko.alpha.database
+import com.hokko.alpha.SecurityConfiguration
 import com.hokko.alpha.models.database.{User, UserKeys}
 import slick.lifted.ProvenShape
 
@@ -10,7 +11,7 @@ object Tables {
     import slick.jdbc.PostgresProfile.api._
     import slick.relational._
 
-    private val schema = Some("project_alpha")
+    private val schema = Some(SecurityConfiguration.getConfiguration.get.dbSchema)
 
     private val userModel = com.hokko.alpha.models.database.User.tupled
     private val userKeyModel = com.hokko.alpha.models.database.UserKeys.tupled

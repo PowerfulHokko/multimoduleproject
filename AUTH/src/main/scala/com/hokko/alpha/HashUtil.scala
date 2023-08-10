@@ -12,19 +12,15 @@ object HashUtil {
     def createHashForUserWhenRegistering(username: String, password: String) : (Array[Byte], Array[Byte], String) = {
         val ran = SecureRandom.getInstance("SHA1PRNG")
         val salt = s"${Math.abs(ran.nextLong())}${Math.abs(ran.nextLong())}"
-        val preparedForHashing = s"$username:$password:$salt"
-
         val md = MessageDigest.getInstance(config.hashAlgo)
-        val digest = md.digest(preparedForHashing.getBytes(_charset))
+        val digest = md.digest(s"$username:$password:$salt".getBytes(_charset))
         (digest,salt.getBytes(_charset), config.hashAlgo)
     }
 
     def createHashForUserWhenLogginAttempt(username: String, salt: Array[Byte], algo: String, pw: String) : Array[Byte] = {
         val saltAsString = new String(salt, _charset)
-        val preparedForHashing = s"$username:$pw:$saltAsString"
-
         val md = MessageDigest.getInstance(algo)
-        val digest = md.digest(preparedForHashing.getBytes(_charset))
+        val digest = md.digest(s"$username:$pw:$saltAsString".getBytes(_charset))
         (digest)
     }
 

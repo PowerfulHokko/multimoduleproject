@@ -19,6 +19,7 @@ class AuthDatabase extends Actor with ActorLogging{
     import Tables._
     import com.hokko.alpha.models.database._
     import slick.jdbc.PostgresProfile.api._
+
     implicit val executionContext: ExecutionContext = ExecutionContext.fromExecutor(
         Executors.newFixedThreadPool(5)
     )
@@ -41,13 +42,6 @@ class AuthDatabase extends Actor with ActorLogging{
         }
 
         case AuthDatabase.RegisterUser(username, hash, salt, algo) => {
-            /**
-             * val insertDBIO = for {
-             * fooId <- (fooTable returning fooTable.map(_id)) += Foo(None, "MyName", 42)
-             * barId <- (barTable returning batTable.map(_id)) += Bar(None, "MyBarname", fooId)
-             * } yield (fooId, barId)
-             */
-
             val createUserQueryPrep = userTable returning userTable.map(_.id) into((item, id) => item.copy(id = id))
             val createKeyQueryPrep = (userKeyTable returning userKeyTable.map(_.userId))
 

@@ -27,11 +27,7 @@ case class SecurityConfiguration(
         keystorePw: String,
         keystoreAlgo: String,
         hashAlgo: String,
-        dbUrl: String,
         dbSchema: String,
-        dbUsername: String,
-        dbPassword: String,
-        dbPoolsize: String,
 )
 
 object SecurityDomain extends DefaultJsonProtocol{
