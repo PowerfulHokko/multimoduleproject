@@ -35,19 +35,25 @@ object SecurityApp extends SprayJsonSupport with RegisterUserEndpointModelJson{
         TODO:
         - JWT Content
         - JWT verification endpoint
+        - Add email (with verification) to app and db
+        - add reset password
+        - add change password
+        - add change username
+        - add wrong password entered counter and sta
         - clean up code (split db and dto)
         - simplify
         - write tests
         - complete analysis doc
 
-        -debugger
+        -debugger -> refactor to use different
         -flyway db generator
      */
 
     implicit val system: ActorSystem = ActorSystem("Sec")
     implicit val materializer: ActorMaterializer = ActorMaterializer()
     implicit val dispatcher: MessageDispatcher = system.dispatchers.lookup("dedicated-dispatcher")
-    implicit val timeout = Timeout(2 second)
+    val time = 2 second
+    implicit val timeout = Timeout(time)
 
     val debugLogger = ContextLogger(this.getClass)
 
@@ -65,7 +71,7 @@ object SecurityApp extends SprayJsonSupport with RegisterUserEndpointModelJson{
             case Credentials.Missing => Future(Option.empty[(String,String)])
             case p @ Credentials.Provided(identifier) => {
                 val existsFuture =  (authDbActor ? AuthDatabase.RequestIfUserExists(identifier)).mapTo[Future[Boolean]].flatten
-                val exist = Await.result(existsFuture, 1 second)
+                val exist = Await.result(existsFuture, time)
                 if(!exist){
                     Future(Option.empty[(String,String)])
                 } else {
@@ -99,16 +105,16 @@ object SecurityApp extends SprayJsonSupport with RegisterUserEndpointModelJson{
             pathPrefix("authservice") {
                 (path("register") & pathEndOrSingleSlash & post & extractRequest) { req =>
                     debugLogger.log(s"Request: ${req.uri} : ${req.method} from ${req.headers.toList.map(h => (h.name(), h.value()))}")
-                    val createUserRequestFuture = req.entity.toStrict(1 second)
+                    val createUserRequestFuture = req.entity.toStrict(time)
                         .map(_.data.utf8String)
                         .map(s => s.parseJson.convertTo[RegisterUserEndpointModel])
 
-                    val createUserRequest = Await.result(createUserRequestFuture, 1 second)
+                    val createUserRequest = Await.result(createUserRequestFuture, time)
 
                     val userExistFuture = (authDbActor ? AuthDatabase.RequestIfUserExists(createUserRequest.username))
                         .mapTo[Future[Boolean]].flatten
 
-                    val userExists = Await.result(userExistFuture, 1 second)
+                    val userExists = Await.result(userExistFuture, time)
 
                     if (userExists) {
                         complete(
@@ -121,8 +127,13 @@ object SecurityApp extends SprayJsonSupport with RegisterUserEndpointModelJson{
                         val userFuture = (authDbActor ? AuthDatabase.RegisterUser(createUserRequest.username, hash, salt, algo))
                             .mapTo[Long]
 
-                        val res = Await.result(userFuture, 1 second)
-
+                        val res = Await.result(userFuture, time);
+                        com.hokko.alpha.mailservice.MailApp.send(subject = "New user registered",
+                            message =
+                                s"""
+                                   |<h1>A new user was registered</h1>
+                                   |<p>Please welcome ${createUserRequest.username}.</p>
+                                   |""".stripMargin);
                         complete(StatusCodes.Created, HttpEntity(s"User: ${createUserRequest.username} created, ID = ${res}"))
                     }
                 } ~
@@ -166,6 +177,7 @@ object SecurityApp extends SprayJsonSupport with RegisterUserEndpointModelJson{
 
         server.map(s => {
             s.unbind();
+            com.hokko.alpha.mailservice.MailApp.terminate()
             s.terminate(30 second)
             system.terminate()
         })

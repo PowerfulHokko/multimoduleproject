@@ -44,7 +44,10 @@ val projDependencies = Seq(
     "com.github.pureconfig" %% "pureconfig" % "0.17.4",
 
     //chimney
-    "io.scalaland" % "chimney_2.13" % "0.8.0-M1"
+    "io.scalaland" % "chimney_2.13" % "0.8.0-M1",
+
+    //mail
+    "org.eclipse.angus" % "angus-mail" % "2.0.2"
 )
 
 lazy val global = project
@@ -66,9 +69,16 @@ lazy val root = (project in file("COMMON"))
         name := "Project-Alpha"
   )
 
+lazy val mailService = (project in file("MAILSERVICE"))
+    .settings(
+        libraryDependencies ++= projDependencies,
+        dependencyOverrides += "org.scala-lang.modules" %% "scala-parser-combinators" % "2.1.1",
+        name := "Project-Alpha"
+    )
+
 lazy val authService = (project in file("AUTH"))
     .settings(
         name := "Project-Alpha AuthService",
         dependencyOverrides += "org.scala-lang.modules" %% "scala-parser-combinators" % "2.1.1",
         libraryDependencies ++= projDependencies,
-    )
+    ).dependsOn(mailService)
